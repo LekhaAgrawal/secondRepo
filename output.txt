@@ -1,0 +1,255 @@
+diff --git a/CVLib/CMakeLists.txt b/CVLib/CMakeLists.txt
+index 0b591d8..3899d15 100644
+--- a/CVLib/CMakeLists.txt
++++ b/CVLib/CMakeLists.txt
+@@ -1,5 +1,9 @@
+ project(cvlib)
+ cmake_minimum_required(VERSION 2.8.8)
++set(CMAKE_LEGACY_CYGWIN_WIN32 0)
++
++find_package (glog 0.3.4)
++
+ 
+ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
+ 
+@@ -18,7 +22,7 @@ endif()
+ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+ 
+ # For now, we need to set this manually
+-set(DLib_DIR "/home/vinay/sources/dlib" CACHE PATH "Path to DLib")
++set(DLib_DIR "/home/aindra/dlib-18.16" CACHE PATH "Path to DLib")
+ set(DLib_SRC "${DLib_DIR}/dlib/all/source.cpp" CACHE PATH "Path to DLib source")
+ include(${DLib_DIR}/dlib/cmake)
+ 
+@@ -69,3 +73,5 @@ setup_test(SVMTest tests/svmclassifiertest.cpp)
+ setup_test(SerializationTest tests/serializationtest.cpp)
+ 
+ install(TARGETS cvlibserver RUNTIME DESTINATION bin)
++
++#target_link_libraries (output glog)
+diff --git a/CVLib/main.cpp b/CVLib/main.cpp
+index 495f74c..6a658aa 100644
+--- a/CVLib/main.cpp
++++ b/CVLib/main.cpp
+@@ -1,5 +1,11 @@
+ #include "server.h"
++#include <glog/logging.h>
+ 
+ int main(int argc, char *argv[]) {
++
++     //Initializing Google library
++    google::InitGoogleLogging(argv[0]);
++
++    LOG(INFO) <<"Calling Run method in main.cpp";
+     run(argc, argv);
+ }
+diff --git a/CVLib/src/verificationjob.cpp b/CVLib/src/verificationjob.cpp
+index 37b90b6..2748de0 100644
+--- a/CVLib/src/verificationjob.cpp
++++ b/CVLib/src/verificationjob.cpp
+@@ -9,14 +9,23 @@
+ #include <map>
+ #include <fstream>
+ 
++#include <glog/logging.h>
++
+ VerificationJob::VerificationJob() {
+     m_type = ServerJobType::VERIFY;
++    LOG(INFO)<<"Server Job type is: verify. ";
+ }
+ 
+ bool VerificationJob::parse(const Wt::Http::Request& request) {
+     const std::string *action = request.getParameter("action");
++
++    LOG(INFO) <<"Action is: "<<action;
++
+     if (action == 0) {
+         m_parseMessage = "'action' is a required parameter for verification [train/verify]";
++
++	LOG(WARNING) <<"Action is required!";
++
+         return false;
+     }
+     if (action->compare("train") == 0) {
+@@ -27,26 +36,33 @@ bool VerificationJob::parse(const Wt::Http::Request& request) {
+     }
+     else {
+         m_parseMessage = "'action' must be one of [train/verify]";
++	LOG(WARNING) <<"Action must be [train/verify]";
+         return false;
+     }
+     const Wt::Http::UploadedFile *uploadedFile = request.getUploadedFile("data");
+     if (uploadedFile == 0) {
+         m_parseMessage = "'data' is a required parameter. Must be a CSV file";
+-        return false;
++	LOG(WARNING) <<" 'data' is required! Must be csv file. ";
++        return false;Action
+     }
+ 
+     m_inputFilename = uploadedFile->spoolFileName();
+ 
+     const std::string *organization = request.getParameter("organization");
++    LOG(INFO) <<"Organization is" <<organization;
++
+     if (organization == 0) {
+         m_parseMessage = "'organization' is a required parameter";
++	LOG(WARNING) <<"Organization is reuired parameter.";
+         return false;
+     }
+     m_organization = std::string(*organization);
+ 
+     const std::string *requestId = request.getParameter("request_id");
++    LOG(INFO) <<"Request ID is" <<requestId;
+     if (requestId == 0) {
+         m_parseMessage = "'request_id' is a required parameter";
++	LOG(WARNING) <<"Request ID is reuired parameter.";
+         return false;
+     }
+     m_requestId = std::string(*requestId);
+@@ -61,8 +77,10 @@ bool VerificationJob::parse(const Wt::Http::Request& request) {
+     }
+ 
+     const std::string *replyUrl = request.getParameter("reply_url");
++    LOG(INFO) <<"Reply URL is"<<reply_url;
+     if (replyUrl == 0) {
+         m_parseMessage = "'reply_url' is a required paramter";
++        LOG(WARNING) <<"Reply URL is reuired parameter.";
+         return false;
+     }
+     m_replyUrl = std::string(*replyUrl);
+@@ -83,23 +101,38 @@ bool VerificationJob::process() {
+         std::vector<std::vector<CaffeNetwork::Dtype> > samples;
+         std::vector<cv::Mat> images;
+         std::vector<std::string> imageUrls;
++
++	LOG(INFO)<<"Training action started. ";
++	
+         
+         for (IMFeatureStruct dataStruct: dataStructs) {
+             cv::Mat im = downloadImage(dataStruct.imageUrl);
++	    LOG(INFO)<<"Image downloaded. ";
++	    LOG(INFO) <<"Image URL is"<<dataStruct.imageurl;  
+             if (!im.empty()) {
+                 cv::Rect faceRect = faceDetector->detectOneFace(im);
++		LOG(INFO)<<"Detecting Face ";
+                 cv::Mat face = faceDetector->extractFace(im, faceRect);
++		LOG(INFO)<<"Extracting Face ";
+                 if (!face.empty()) {
+                     images.push_back(face);
+                     labels.push_back(dataStruct.personId);
+                     imageUrls.push_back(dataStruct.imageUrl);
++		    LOG(INFO) <<"Person ID is"<<dataStruct.personId;
++		      
+                 }
++		else {
++		    LOG(INFO)<<"No face found. ";
++		}
+             }
++	    else {
++		LOG(WARNING)<<"Image is empty. ";
++	    }
+         }
+         samples = caffeNet.extractDescriptorsCPU(images);
+ 
+         DBAccess *dbAccess = ObjectFactory::dbAccess();
+-        std::vector<DBOFeature> dboFeatures = dbAccess->featuresToDBO(m_organization,
++        std::vector<DBOFeature> dboFeatures = dbAccess->featuresToDBO(m_organization, 
+                                                                       labels, samples,
+                                                                       imageUrls, DBOFeature::Type::Verification);
+         dbAccess->addFeatures(dboFeatures);
+@@ -107,9 +140,11 @@ bool VerificationJob::process() {
+         // Features for people existing in the DB are retrieved from the DB and appended to existing lists
+         if (!m_freshTrain) {
+             std::vector<IMFeatureStruct> featureStructs = dbAccess->getIMFeaturesForOrg(m_organization, DBOFeature::Type::Verification);
++	    LOG(INFO)<<"Getting features for organization: "<<m_organization;
+             for (IMFeatureStruct featureStruct: featureStructs) {
+                 labels.push_back(featureStruct.personId);
+                 samples.push_back(featureStruct.feature);
++		LOG(INFO)<<"For person ID: "<<featurestruct.personId;
+             }
+         }
+ 
+@@ -117,8 +152,10 @@ bool VerificationJob::process() {
+         verifier.fit(samples, labels);
+         ObjectFactory::setVerificationClassifer(m_organization, verifier);
+         dbAccess->saveVerifier(m_organization, verifier);
++	LOG(INFO)<<"Saved verifier for organization: "<<m_organization;
+         
+     } else if (m_action == Action::VERIFY) {
++	 LOG(INFO) <<"Verify action started.";
+         Verification::BayesVerifier *verifier = ObjectFactory::verificationClassifier(m_organization);
+         if (verifier == 0) {
+             std::map<std::string, std::string> params;
+@@ -126,6 +163,7 @@ bool VerificationJob::process() {
+             params["request_id"] = m_requestId;
+             params["error_str"] = "This organization hasn't been trained for verification";
+             postRequest(m_replyUrl, params);
++	    LOG(INFO) <<"This organization hasn't been trained for verfication, request ID is: "<<m_requestId;
+             return false;
+         }
+         
+@@ -138,9 +176,13 @@ bool VerificationJob::process() {
+         
+         for (IMFeatureStruct dataStruct: dataStructs) {
+             cv::Mat im = downloadImage(dataStruct.imageUrl);
++	    LOG(INFO) <<"Image Downloaded. Image URL is"<<dataStruct.imageurl;
+             if (!im.empty()) {
+                 cv::Rect faceRect = faceDetector->detectOneFace(im);
++		LOG(INFO)<<"Detecting Face ";
++		
+                 cv::Mat face = faceDetector->extractFace(im, faceRect);
++		LOG(INFO)<<"Extracting Face ": 
+                 if (!face.empty()) {
+                     std::vector<int> imageSize;
+                     imageSize.push_back(im.rows);
+@@ -151,8 +193,16 @@ bool VerificationJob::process() {
+                     images.push_back(face);
+                     faceRects.push_back(faceRect);
+                     imageUrls.push_back(dataStruct.imageUrl);
++		    LOG(INFO) <<"Person ID is"<<dataStruct.personId;
++		    
+                 }
++		else {
++		    LOG(INFO)<<"No face detected. ";
++		}
+             }
++	    else {
++		LOG(WARNING)<<"Image is empty.";
++	    }
+         }
+         samples = caffeNet.extractDescriptorsCPU(images);
+         
+@@ -168,6 +218,8 @@ bool VerificationJob::process() {
+         params["data"] = filename;
+ 
+         std::ofstream outputFile(filename);
++	LOG(INFO) <<"Writing into output file";
++	
+         for (int i = 0; i < predictions.size(); i++) {
+             outputFile << imageUrls[i] << ",";
+             outputFile << imageSizes[i][0] << ",";
+@@ -192,8 +244,10 @@ std::string VerificationJob::parseMessage() {
+ 
+ void VerificationJob::parseAndPrepare() {
+     std::ifstream inputFile(m_inputFilename);
++    LOG(INFO)<<"Input file name is: "<<m_inputFilename;
+ 
+     std::string line;
++    LOG(INFO)<<"Fetching data from Input file line by line ";
+     while (std::getline(inputFile, line)) {
+         IMFeatureStruct dataStruct;
+         std::vector<string> parts = splitLine(line);
+@@ -202,8 +256,13 @@ void VerificationJob::parseAndPrepare() {
+         }
+         dataStruct.imageUrl = parts[0];
+         dataStruct.personId = parts[1];
++	LOG(INFO)<<"Image URL is: "<<part[0];
++	LOG(INFO)<<"Person ID is: "<<part[1];
+ 
+         dataStructs.push_back(dataStruct);
+     }
++    
+     inputFile.close();
++    LOG(INFO)<<"Input file closed. ";
++	
+ }
